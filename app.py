@@ -8,8 +8,23 @@ import io
 import json
 import requests
 from collections import Counter
-import plotly.express as px
 import traceback
+
+# 尝试导入plotly，处理平台兼容性
+px = None
+plotly_available = False
+
+def import_plotly_safely():
+    global px, plotly_available
+    try:
+        import plotly.express as px
+        plotly_available = True
+        logging.info("成功导入plotly库")
+        return True
+    except ImportError as e:
+        logging.warning(f"无法导入plotly库: {e}，将使用替代方案")
+        plotly_available = False
+        return False
 
 # 尝试导入matplotlib和相关库，处理平台兼容性
 plt = None
@@ -30,6 +45,7 @@ def import_matplotlib_safely():
         return False
 
 # 调用安全导入函数
+import_plotly_safely()
 import_matplotlib_safely()
 
 # LangChain 相关导入
@@ -810,14 +826,29 @@ if "analyzed" in st.session_state and st.session_state.analyzed:
                 sentiment_counts = result_df[result_col].value_counts()
                 
                 st.write(f"#### {col} - 情感分析分布")
-                fig = px.pie(
-                    values=sentiment_counts.values,
-                    names=sentiment_counts.index,
-                    title=f"{col} 情感分析结果",
-                    color_discrete_sequence=px.colors.qualitative.Set3
-                )
-                st.plotly_chart(fig)
-                logger.info(f"生成 {col} 列的情感分析饼图")
+                # 检查plotly是否可用
+                if plotly_available and px is not None:
+                    try:
+                        fig = px.pie(
+                            values=sentiment_counts.values,
+                            names=sentiment_counts.index,
+                            title=f"{col} 情感分析结果",
+                            color_discrete_sequence=px.colors.qualitative.Set3
+                        )
+                        st.plotly_chart(fig)
+                        logger.info(f"生成 {col} 列的情感分析饼图")
+                    except Exception as pie_e:
+                        logger.error(f"饼图生成失败，显示文本统计替代: {pie_e}")
+                        st.write("### 情感分析统计")
+                        for sentiment, count in sentiment_counts.items():
+                            percentage = (count / len(result_df)) * 100
+                            st.write(f"- **{sentiment}**: {count} 条 ({percentage:.1f}%)")
+                    else:
+                        logger.info("plotly不可用，显示文本统计替代")
+                        st.write("### 情感分析统计")
+                        for sentiment, count in sentiment_counts.items():
+                            percentage = (count / len(result_df)) * 100
+                            st.write(f"- **{sentiment}**: {count} 条 ({percentage:.1f}%)")
     
     elif analysis_type == "关键词提取":
         # 显示关键词词云
@@ -853,10 +884,57 @@ if "analyzed" in st.session_state and st.session_state.analyzed:
                             except Exception as wordcloud_e:
                                 logger.error(f"词云生成失败，显示关键词统计替代: {wordcloud_e}")
                                 # 显示关键词统计
-                                keyword_counts = Counter(all_keywords)
-                                top_keywords = dict(keyword_counts.most_common(10))
-                                
                                 st.write(f"#### {col} - 关键词统计")
+                                # 检查plotly是否可用
+                                if plotly_available and px is not None:
+                                    try:
+                                        fig = px.bar(
+                                            x=list(top_keywords.keys()),
+                                            y=list(top_keywords.values()),
+                                            labels={'x': '关键词', 'y': '出现次数'},
+                                            title=f"{col} - 关键词出现次数"
+                                        )
+                                        st.plotly_chart(fig)
+                                    except Exception as bar_e:
+                                        logger.error(f"柱状图生成失败，显示文本统计替代: {bar_e}")
+                                        st.write("### 关键词出现次数统计")
+                                        for keyword, count in top_keywords.items():
+                                            st.write(f"- **{keyword}**: {count} 次")
+                                else:
+                                    logger.info("plotly不可用，显示文本统计替代")
+                                    st.write("### 关键词出现次数统计")
+                                    for keyword, count in top_keywords.items():
+                                        st.write(f"- **{keyword}**: {count} 次")
+                        else:
+                            logger.info("matplotlib不可用，显示关键词统计替代")
+                            st.write(f"#### {col} - 关键词统计")
+                            # 检查plotly是否可用
+                            if plotly_available and px is not None:
+                                try:
+                                    fig = px.bar(
+                                        x=list(top_keywords.keys()),
+                                        y=list(top_keywords.values()),
+                                        labels={'x': '关键词', 'y': '出现次数'},
+                                        title=f"{col} - 关键词出现次数"
+                                    )
+                                    st.plotly_chart(fig)
+                                except Exception as bar_e:
+                                    logger.error(f"柱状图生成失败，显示文本统计替代: {bar_e}")
+                                    st.write("### 关键词出现次数统计")
+                                    for keyword, count in top_keywords.items():
+                                        st.write(f"- **{keyword}**: {count} 次")
+                                else:
+                                    logger.info("plotly不可用，显示文本统计替代")
+                                    st.write("### 关键词出现次数统计")
+                                    for keyword, count in top_keywords.items():
+                                        st.write(f"- **{keyword}**: {count} 次")
+                    except Exception as e:
+                        st.warning(f"可视化生成失败: {e}")
+                        logger.error(f"可视化生成失败: {e}")
+                        st.write(f"#### {col} - 关键词统计")
+                        # 检查plotly是否可用
+                        if plotly_available and px is not None:
+                            try:
                                 fig = px.bar(
                                     x=list(top_keywords.keys()),
                                     y=list(top_keywords.values()),
@@ -864,35 +942,16 @@ if "analyzed" in st.session_state and st.session_state.analyzed:
                                     title=f"{col} - 关键词出现次数"
                                 )
                                 st.plotly_chart(fig)
-                        else:
-                            logger.info("matplotlib不可用，显示关键词统计替代")
-                            # 直接显示关键词统计
-                            keyword_counts = Counter(all_keywords)
-                            top_keywords = dict(keyword_counts.most_common(10))
-                            
-                            st.write(f"#### {col} - 关键词统计")
-                            fig = px.bar(
-                                x=list(top_keywords.keys()),
-                                y=list(top_keywords.values()),
-                                labels={'x': '关键词', 'y': '出现次数'},
-                                title=f"{col} - 关键词出现次数"
-                            )
-                            st.plotly_chart(fig)
-                    except Exception as e:
-                        st.warning(f"可视化生成失败: {e}")
-                        logger.error(f"可视化生成失败: {e}")
-                        # 显示关键词统计
-                        keyword_counts = Counter(all_keywords)
-                        top_keywords = dict(keyword_counts.most_common(10))
-                        
-                        st.write(f"#### {col} - 关键词统计")
-                        fig = px.bar(
-                            x=list(top_keywords.keys()),
-                            y=list(top_keywords.values()),
-                            labels={'x': '关键词', 'y': '出现次数'},
-                            title=f"{col} - 关键词出现次数"
-                        )
-                        st.plotly_chart(fig)
+                            except Exception as bar_e:
+                                logger.error(f"柱状图生成失败，显示文本统计替代: {bar_e}")
+                                st.write("### 关键词出现次数统计")
+                                for keyword, count in top_keywords.items():
+                                    st.write(f"- **{keyword}**: {count} 次")
+                            else:
+                                logger.info("plotly不可用，显示文本统计替代")
+                                st.write("### 关键词出现次数统计")
+                                for keyword, count in top_keywords.items():
+                                    st.write(f"- **{keyword}**: {count} 次")
                         logger.info(f"生成 {col} 列的关键词统计柱状图")
     
     elif analysis_type == "标签提取":
@@ -911,15 +970,29 @@ if "analyzed" in st.session_state and st.session_state.analyzed:
                     top_tags = dict(tag_counts.most_common(10))
                     
                     st.write(f"#### {col} - 标签统计")
-                    fig = px.bar(
-                        x=list(top_tags.keys()),
-                        y=list(top_tags.values()),
-                        labels={'x': '标签', 'y': '出现次数'},
-                        title=f"{col} - 标签出现次数",
-                        color_discrete_sequence=px.colors.qualitative.Pastel
-                    )
-                    st.plotly_chart(fig)
-                    logger.info(f"生成 {col} 列的标签统计柱状图")
+                    # 检查plotly是否可用
+                    if plotly_available and px is not None:
+                        try:
+                            fig = px.bar(
+                                x=list(top_tags.keys()),
+                                y=list(top_tags.values()),
+                                labels={'x': '标签', 'y': '出现次数'},
+                                title=f"{col} - 标签出现次数",
+                                color_discrete_sequence=px.colors.qualitative.Pastel
+                            )
+                            st.plotly_chart(fig)
+                            logger.info(f"生成 {col} 列的标签统计柱状图")
+                        except Exception as tag_e:
+                            logger.error(f"标签柱状图生成失败，显示文本统计替代: {tag_e}")
+                            st.write("### 标签出现次数统计")
+                            for tag, count in top_tags.items():
+                                st.write(f"- **{tag}**: {count} 次")
+                    else:
+                        logger.info("plotly不可用，显示文本统计替代")
+                        st.write("### 标签出现次数统计")
+                        for tag, count in top_tags.items():
+                            st.write(f"- **{tag}**: {count} 次")
+                        logger.info(f"生成 {col} 列的标签统计柱状图")
     
     # 结果导出
     st.subheader("导出结果")
