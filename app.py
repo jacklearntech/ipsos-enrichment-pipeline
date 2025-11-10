@@ -2,7 +2,6 @@
 import pandas as pd
 import numpy as np
 import streamlit as st
-import matplotlib.pyplot as plt
 import logging
 import time
 import io
@@ -10,8 +9,28 @@ import json
 import requests
 from collections import Counter
 import plotly.express as px
-from wordcloud import WordCloud
 import traceback
+
+# 尝试导入matplotlib和相关库，处理平台兼容性
+plt = None
+WordCloud = None
+matplotlib_available = False
+
+def import_matplotlib_safely():
+    global plt, WordCloud, matplotlib_available
+    try:
+        import matplotlib.pyplot as plt
+        from wordcloud import WordCloud
+        matplotlib_available = True
+        logging.info("成功导入matplotlib及相关库")
+        return True
+    except ImportError as e:
+        logging.warning(f"无法导入matplotlib库: {e}，将使用替代方案")
+        matplotlib_available = False
+        return False
+
+# 调用安全导入函数
+import_matplotlib_safely()
 
 # LangChain 相关导入
 from langchain.prompts import PromptTemplate
@@ -29,9 +48,13 @@ logger = logging.getLogger(__name__)
 logger.info("应用程序启动 - Excel智能文本分析助手 v1.0")
 
 # Matplotlib 中文字体配置 - 确保图表中文正常显示
-plt.rcParams["font.family"] = ["SimHei", "WenQuanYi Micro Hei", "Heiti TC", "Arial Unicode MS", "DejaVu Sans"]
-plt.rcParams["axes.unicode_minus"] = False  # 正确显示负号
-logger.info("Matplotlib中文字体配置完成")
+if matplotlib_available:
+    try:
+        plt.rcParams["font.family"] = ["SimHei", "WenQuanYi Micro Hei", "Heiti TC", "Arial Unicode MS", "DejaVu Sans"]
+        plt.rcParams["axes.unicode_minus"] = False  # 正确显示负号
+        logger.info("Matplotlib中文字体配置完成")
+    except Exception as e:
+        logger.warning(f"Matplotlib配置失败: {e}")
 
 # Streamlit 页面配置
 st.set_page_config(
@@ -809,24 +832,55 @@ if "analyzed" in st.session_state and st.session_state.analyzed:
                 if all_keywords:
                     st.write(f"#### {col} - 关键词词云")
                     try:
-                        # 生成词云
-                        wordcloud = WordCloud(
-                            width=800, 
-                            height=400, 
-                            background_color='white',
-                            font_path=None  # 使用默认字体
-                        ).generate(" ".join(all_keywords))
-                        
-                        # 显示词云
-                        plt.figure(figsize=(10, 5))
-                        plt.imshow(wordcloud, interpolation='bilinear')
-                        plt.axis("off")
-                        st.pyplot(plt)
-                        plt.clf()
-                        logger.info(f"生成 {col} 列的关键词词云")
+                        # 检查matplotlib是否可用
+                        if matplotlib_available and plt is not None and WordCloud is not None:
+                            try:
+                                # 生成词云
+                                wordcloud = WordCloud(
+                                    width=800, 
+                                    height=400, 
+                                    background_color='white',
+                                    font_path=None  # 使用默认字体
+                                ).generate(" ".join(all_keywords))
+                                
+                                # 显示词云
+                                plt.figure(figsize=(10, 5))
+                                plt.imshow(wordcloud, interpolation='bilinear')
+                                plt.axis("off")
+                                st.pyplot(plt)
+                                plt.clf()
+                                logger.info(f"生成 {col} 列的关键词词云")
+                            except Exception as wordcloud_e:
+                                logger.error(f"词云生成失败，显示关键词统计替代: {wordcloud_e}")
+                                # 显示关键词统计
+                                keyword_counts = Counter(all_keywords)
+                                top_keywords = dict(keyword_counts.most_common(10))
+                                
+                                st.write(f"#### {col} - 关键词统计")
+                                fig = px.bar(
+                                    x=list(top_keywords.keys()),
+                                    y=list(top_keywords.values()),
+                                    labels={'x': '关键词', 'y': '出现次数'},
+                                    title=f"{col} - 关键词出现次数"
+                                )
+                                st.plotly_chart(fig)
+                        else:
+                            logger.info("matplotlib不可用，显示关键词统计替代")
+                            # 直接显示关键词统计
+                            keyword_counts = Counter(all_keywords)
+                            top_keywords = dict(keyword_counts.most_common(10))
+                            
+                            st.write(f"#### {col} - 关键词统计")
+                            fig = px.bar(
+                                x=list(top_keywords.keys()),
+                                y=list(top_keywords.values()),
+                                labels={'x': '关键词', 'y': '出现次数'},
+                                title=f"{col} - 关键词出现次数"
+                            )
+                            st.plotly_chart(fig)
                     except Exception as e:
-                        st.warning(f"词云生成失败: {e}")
-                        logger.error(f"词云生成失败: {e}")
+                        st.warning(f"可视化生成失败: {e}")
+                        logger.error(f"可视化生成失败: {e}")
                         # 显示关键词统计
                         keyword_counts = Counter(all_keywords)
                         top_keywords = dict(keyword_counts.most_common(10))
