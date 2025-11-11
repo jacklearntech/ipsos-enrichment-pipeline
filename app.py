@@ -2,72 +2,26 @@
 import pandas as pd
 import numpy as np
 import streamlit as st
+import matplotlib.pyplot as plt
 import logging
 import time
 import io
-from collections import Counter
 import traceback
 
-# 尝试导入plotly，处理平台兼容性
-px = None
-plotly_available = False
+# 第三方库导入
+import plotly.express as px
+from wordcloud import WordCloud
+from collections import Counter
 
-def import_plotly_safely():
-    global px, plotly_available
-    try:
-        import plotly.express as px
-        plotly_available = True
-        logging.info("成功导入plotly库")
-        return True
-    except ImportError as e:
-        logging.warning(f"无法导入plotly库: {e}，将使用替代方案")
-        plotly_available = False
-        return False
+# LangChain 相关导入
+from langchain.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
+from langchain_core.output_parsers import StrOutputParser
 
-# 尝试导入matplotlib和相关库，处理平台兼容性
-plt = None
-WordCloud = None
-matplotlib_available = False
-
-def import_matplotlib_safely():
-    global plt, WordCloud, matplotlib_available
-    try:
-        import matplotlib.pyplot as plt
-        from wordcloud import WordCloud
-        matplotlib_available = True
-        logging.info("成功导入matplotlib及相关库")
-        return True
-    except ImportError as e:
-        logging.warning(f"无法导入matplotlib库: {e}，将使用替代方案")
-        matplotlib_available = False
-        return False
-
-# 调用安全导入函数
-import_plotly_safely()
-import_matplotlib_safely()
-
-# 尝试导入LangChain相关库，处理平台兼容性
-PromptTemplate = None
-ChatOpenAI = None
-StrOutputParser = None
-langchain_available = False
-
-def import_langchain_safely():
-    global PromptTemplate, ChatOpenAI, StrOutputParser, langchain_available
-    try:
-        from langchain.prompts import PromptTemplate
-        from langchain_openai import ChatOpenAI
-        from langchain_core.output_parsers import StrOutputParser
-        langchain_available = True
-        logging.info("成功导入LangChain相关库")
-        return True
-    except ImportError as e:
-        logging.warning(f"无法导入LangChain库: {e}，将使用替代方案")
-        langchain_available = False
-        return False
-
-# 调用安全导入函数
-import_langchain_safely()
+# 兼容性标志
+plotly_available = True
+matplotlib_available = True
+langchain_available = True
 
 # 日志配置 - 确保详细记录应用运行状态
 logging.basicConfig(
@@ -79,13 +33,12 @@ logger = logging.getLogger(__name__)
 logger.info("应用程序启动 - Excel智能文本分析助手 v1.0")
 
 # Matplotlib 中文字体配置 - 确保图表中文正常显示
-if matplotlib_available:
-    try:
-        plt.rcParams["font.family"] = ["SimHei", "WenQuanYi Micro Hei", "Heiti TC", "Arial Unicode MS", "DejaVu Sans"]
-        plt.rcParams["axes.unicode_minus"] = False  # 正确显示负号
-        logger.info("Matplotlib中文字体配置完成")
-    except Exception as e:
-        logger.warning(f"Matplotlib配置失败: {e}")
+try:
+    plt.rcParams["font.family"] = ["SimHei", "WenQuanYi Micro Hei", "Heiti TC", "Arial Unicode MS", "DejaVu Sans"]
+    plt.rcParams["axes.unicode_minus"] = False  # 正确显示负号
+    logger.info("Matplotlib中文字体配置完成")
+except Exception as e:
+    logger.warning(f"Matplotlib配置失败: {e}")
 
 # Streamlit 页面配置
 st.set_page_config(
@@ -183,8 +136,8 @@ def get_llm():
     Raises:
         Exception: 当模型初始化失败时
     """
-    # 检查LangChain是否可用
-    if not langchain_available or ChatOpenAI is None:
+    # 检查ChatOpenAI是否可用
+    if ChatOpenAI is None:
         logger.error("LangChain库不可用，无法初始化语言模型")
         raise Exception("LangChain库不可用，请检查依赖安装")
     
@@ -281,8 +234,8 @@ def analyze_texts_langchain(texts, mode="sentiment", progress_callback=None):
     4. 结果会进行清理和验证，确保格式一致
     """
 
-    # 检查LangChain是否可用
-    if not langchain_available or PromptTemplate is None or StrOutputParser is None:
+    # 检查LangChain组件是否可用
+    if PromptTemplate is None or StrOutputParser is None:
         logger.warning("LangChain库不可用，将使用模拟结果进行分析")
         # 返回模拟结果，确保应用不会崩溃
         results = []
@@ -359,7 +312,8 @@ def analyze_texts_langchain(texts, mode="sentiment", progress_callback=None):
             batch_size = 10
             
             # 分批处理文本，使用LangChain的batch方法实现真正的并行处理
-            for i in range(0, len(texts), batch_size):
+            i = 0
+            while i < len(texts):
                 batch_texts = texts[i:i+batch_size]
                 
                 # 准备批量输入
@@ -380,32 +334,53 @@ def analyze_texts_langchain(texts, mode="sentiment", progress_callback=None):
                     # 验证结果确保是三个选项之一
                     validated_results = [validate_sentiment_result(result) for result in batch_results]
                     results.extend(validated_results)
+                    
+                    # 更新进度
+                    if progress_callback:
+                        progress_callback(min(i + batch_size, len(texts)))
+                    
+                    # 批处理完成后短暂延迟
+                    time.sleep(0.1)
+                    
+                    # 移动到下一批
+                    i += batch_size
                 except Exception as e:
-                    logger.error(f"批处理失败，将逐个处理: {e}")
-                    # 回退到逐个处理
-                    for j, text in enumerate(batch_texts):
-                        try:
-                            result = chain.invoke({
-                                "text": text,
-                                "positive_words": ", ".join(st.session_state.sentiment_dict["正面"]),
-                                "negative_words": ", ".join(st.session_state.sentiment_dict["负面"]),
-                                "neutral_words": ", ".join(st.session_state.sentiment_dict["中性"])
-                            })
-                            validated_result = validate_sentiment_result(result)
-                            results.append(validated_result)
-                            logger.debug(f"[{i+j+1}/{len(texts)}] 情感分析结果: {validated_result}")
-                        except Exception as e2:
-                            logger.error(f"情感分析出错: {e2}，使用模拟结果")
-                            st.warning(f"分析出错: {e2}，使用模拟结果")
-                            # 当出错时，根据文本长度和关键词进行简单判断
-                            results.append(np.random.choice(["正面", "负面", "中性"], p=[0.4, 0.3, 0.3]))
-                
-                # 更新进度
-                if progress_callback:
-                    progress_callback(min(i + batch_size, len(texts)))
-                
-                # 批处理完成后短暂延迟
-                time.sleep(0.1)
+                    logger.error(f"批处理失败: {e}")
+                    # 如果批处理大小大于5，则减半批处理大小并重试
+                    if batch_size > 5:
+                        logger.info("将批处理大小从10减少到5，然后重试")
+                        batch_size = 5
+                        # 不增加i，重试同一批次
+                        time.sleep(0.1)  # 短暂延迟后重试
+                    else:
+                        # 批处理大小已经是5或更小，回退到逐个处理
+                        logger.info("批处理大小已经是5或更小，将逐个处理")
+                        for j, text in enumerate(batch_texts):
+                            try:
+                                result = chain.invoke({
+                                    "text": text,
+                                    "positive_words": ", ".join(st.session_state.sentiment_dict["正面"]),
+                                    "negative_words": ", ".join(st.session_state.sentiment_dict["负面"]),
+                                    "neutral_words": ", ".join(st.session_state.sentiment_dict["中性"])
+                                })
+                                validated_result = validate_sentiment_result(result)
+                                results.append(validated_result)
+                                logger.debug(f"[{i+j+1}/{len(texts)}] 情感分析结果: {validated_result}")
+                            except Exception as e2:
+                                logger.error(f"情感分析出错: {e2}，使用模拟结果")
+                                st.warning(f"分析出错: {e2}，使用模拟结果")
+                                # 当出错时，根据文本长度和关键词进行简单判断
+                                results.append(np.random.choice(["正面", "负面", "中性"], p=[0.4, 0.3, 0.3]))
+                        
+                        # 更新进度
+                        if progress_callback:
+                            progress_callback(min(i + len(batch_texts), len(texts)))
+                        
+                        # 逐个处理完成后短暂延迟
+                        time.sleep(0.1)
+                        
+                        # 移动到下一批
+                        i += len(batch_texts)
                 
             # 确保结果格式一致
             results = [result for result in results if result]
@@ -417,9 +392,15 @@ def analyze_texts_langchain(texts, mode="sentiment", progress_callback=None):
             # 关键词提取提示模板
             template = """
             你是一个关键词提取专家。请从以下文本中提取最重要的关键词。
+            
+            提取规则：
+            - 提取3-5个最能代表文本主题的关键词
+            - 关键词应该简洁明了，避免冗长的短语
+            - 以逗号分隔的形式返回关键词
+            
             文本: {text}
             
-            请以逗号分隔的形式返回3-5个关键词，例如："重要, 问题, 服务, 体验"
+            请严格按照要求返回3-5个关键词，例如："重要, 问题, 服务, 体验"
             """
             prompt = PromptTemplate.from_template(template)
             chain = prompt | llm | StrOutputParser()
@@ -429,7 +410,8 @@ def analyze_texts_langchain(texts, mode="sentiment", progress_callback=None):
             batch_size = 10
             
             # 分批处理文本，使用LangChain的batch方法实现真正的并行处理
-            for i in range(0, len(texts), batch_size):
+            i = 0
+            while i < len(texts):
                 batch_texts = texts[i:i+batch_size]
                 
                 # 准备批量输入
@@ -442,44 +424,83 @@ def analyze_texts_langchain(texts, mode="sentiment", progress_callback=None):
                     logger.debug(f"并行处理第 {i+1} 到 {min(i+batch_size, len(texts))} 条文本")
                     batch_results = chain.batch(batch_inputs, config={"max_concurrency": 10})
                     
-                    # 清理结果
+                    # 清理结果 - 确保结果格式一致且符合要求
+                    cleaned_results = []
                     for result in batch_results:
+                        # 分割结果，移除空白
                         keywords = [kw.strip() for kw in result.split(",") if kw.strip()]
+                        # 限制最多5个关键词
                         result_str = ", ".join(keywords[:5])
-                        results.append(result_str)
+                        cleaned_results.append(result_str)
+                    
+                    results.extend(cleaned_results)
+                    
+                    for j, result in enumerate(cleaned_results):
+                        logger.debug(f"[{i+j+1}/{len(texts)}] 提取关键词结果: {result}")
+                    
+                    # 更新进度
+                    if progress_callback:
+                        progress_callback(min(i + batch_size, len(texts)))
+                    
+                    # 批处理完成后短暂延迟
+                    time.sleep(0.1)
+                    
+                    # 移动到下一批
+                    i += batch_size
                 except Exception as e:
-                    logger.error(f"批处理失败，将逐个处理: {e}")
-                    # 回退到逐个处理
-                    for j, text in enumerate(batch_texts):
-                        try:
-                            result = chain.invoke({"text": text})
-                            # 清理结果
-                            keywords = [kw.strip() for kw in result.split(",") if kw.strip()]
-                            result_str = ", ".join(keywords[:5])
-                            results.append(result_str)
-                            logger.debug(f"[{i+j+1}/{len(texts)}] 提取关键词结果: {result_str}")
-                        except Exception as e2:
-                            logger.error(f"关键词提取出错: {e2}，使用模拟结果")
-                            st.warning(f"分析出错: {e2}，使用模拟结果")
-                            keywords = ["重要", "问题", "服务", "体验", "产品", "建议", "功能", "界面"]
-                            selected = np.random.choice(keywords, size=np.random.randint(2, 5), replace=False)
-                            result_str = ", ".join(selected)
-                            results.append(result_str)
-                
-                # 更新进度
-                if progress_callback:
-                    progress_callback(min(i + batch_size, len(texts)))
-                
-                # 批处理完成后短暂延迟，避免请求过于频繁
-                time.sleep(0.1)
-                
-            logger.info(f"关键词提取完成，共处理 {len(results)} 条文本，处理率: {len(results)}/{len(texts)}")
+                    logger.error(f"批处理失败: {e}")
+                    # 如果批处理大小大于5，则减半批处理大小并重试
+                    if batch_size > 5:
+                        logger.info("将批处理大小从10减少到5，然后重试")
+                        batch_size = 5
+                        # 不增加i，重试同一批次
+                        time.sleep(0.1)  # 短暂延迟后重试
+                    else:
+                        # 批处理大小已经是5或更小，回退到逐个处理
+                        logger.info("批处理大小已经是5或更小，将逐个处理")
+                        for j, text in enumerate(batch_texts):
+                            try:
+                                logger.debug(f"[{i+j+1}/{len(texts)}] 提取关键词: {text[:50]}...")
+                                result = chain.invoke({"text": text})
+                                # 清理结果
+                                keywords = [kw.strip() for kw in result.split(",") if kw.strip()]
+                                result_str = ", ".join(keywords[:5])
+                                results.append(result_str)
+                                logger.debug(f"[{i+j+1}/{len(texts)}] 提取关键词结果: {result_str}")
+                            except Exception as e2:
+                                logger.error(f"关键词提取出错: {e2}，使用模拟结果")
+                                st.warning(f"分析出错: {e2}，使用模拟结果")
+                                keywords = ["重要", "问题", "服务", "体验", "产品", "建议", "功能", "界面"]
+                                selected = np.random.choice(keywords, size=np.random.randint(2, 5), replace=False)
+                                result_str = ", ".join(selected)
+                                results.append(result_str)
+                        
+                        # 更新进度
+                        if progress_callback:
+                            progress_callback(min(i + len(batch_texts), len(texts)))
+                        
+                        # 逐个处理完成后短暂延迟
+                        time.sleep(0.1)
+                        
+                        # 移动到下一批
+                        i += len(batch_texts)
+            
+            # 确保结果格式一致
+            results = [result for result in results if result]
+            
+            logger.info(f"关键词提取完成，有效结果数量: {len(results)}/{len(texts)}")
             return results
             
         elif mode == "tags":
             # 标签提取提示模板
             template = """
             你是一个文本标签专家。请为以下文本打上合适的标签。
+            
+            标签选择规则：
+            - 从提供的标签库中选择最匹配的标签
+            - 最多选择3个标签，最少选择1个
+            - 严格按照标签库中的标签名称选择，不要自行创造新标签
+            
             可选标签库: {tags}
             
             文本: {text}
@@ -495,7 +516,8 @@ def analyze_texts_langchain(texts, mode="sentiment", progress_callback=None):
             tags_str = ", ".join(st.session_state.custom_tags)
             
             # 分批处理文本，使用LangChain的batch方法实现真正的并行处理
-            for i in range(0, len(texts), batch_size):
+            i = 0
+            while i < len(texts):
                 batch_texts = texts[i:i+batch_size]
                 
                 # 准备批量输入
@@ -515,55 +537,75 @@ def analyze_texts_langchain(texts, mode="sentiment", progress_callback=None):
                         tags = [tag.strip() for tag in result.split(",") if tag.strip()]
                         # 验证标签是否在标签库中
                         valid_tags = [tag for tag in tags if tag in st.session_state.custom_tags]
-                        # 限制数量为1-3个
-                        if len(valid_tags) == 0:
-                            # 如果没有有效标签，随机选择一个
-                            valid_tags = [np.random.choice(st.session_state.custom_tags)]
-                        elif len(valid_tags) > 3:
-                            valid_tags = valid_tags[:3]
-                        # 转换为字符串
-                        cleaned_results.append(", ".join(valid_tags))
+                        # 限制最多3个标签
+                        result_str = ", ".join(valid_tags[:3])
+                        # 如果没有有效标签，则随机选择一个
+                        if not result_str:
+                            result_str = np.random.choice(st.session_state.custom_tags)
+                        cleaned_results.append(result_str)
+                    
                     results.extend(cleaned_results)
+                    
+                    for j, result in enumerate(cleaned_results):
+                        logger.debug(f"[{i+j+1}/{len(texts)}] 提取标签结果: {result}")
+                    
+                    # 更新进度
+                    if progress_callback:
+                        progress_callback(min(i + batch_size, len(texts)))
+                    
+                    # 批处理完成后短暂延迟
+                    time.sleep(0.1)
+                    
+                    # 移动到下一批
+                    i += batch_size
                 except Exception as e:
-                    logger.error(f"批处理失败，将逐个处理: {e}")
-                    # 回退到逐个处理
-                    for j, text in enumerate(batch_texts):
-                        try:
-                            result = chain.invoke({"text": text, "tags": tags_str})
-                            # 清理结果
-                            tags = [tag.strip() for tag in result.split(",") if tag.strip()]
-                            valid_tags = [tag for tag in tags if tag in st.session_state.custom_tags]
-                            # 限制数量为1-3个
-                            if len(valid_tags) == 0:
-                                valid_tags = [np.random.choice(st.session_state.custom_tags)]
-                            elif len(valid_tags) > 3:
-                                valid_tags = valid_tags[:3]
-                            result_str = ", ".join(valid_tags)
-                            results.append(result_str)
-                            logger.debug(f"[{i+j+1}/{len(texts)}] 标签提取结果: {result_str}")
-                        except Exception as e2:
-                            logger.error(f"标签提取出错: {e2}，使用模拟结果")
-                            st.warning(f"分析出错: {e2}，使用模拟结果")
-                            # 从标签库中随机选择1-3个标签
-                            num_tags = np.random.randint(1, 4)
-                            selected = np.random.choice(st.session_state.custom_tags, size=num_tags, replace=False)
-                            result_str = ", ".join(selected)
-                            results.append(result_str)
-                
-                # 更新进度
-                if progress_callback:
-                    progress_callback(min(i + batch_size, len(texts)))
-                
-                # 批处理完成后短暂延迟
-                time.sleep(0.1)
-                
-            logger.info(f"标签提取完成，共处理 {len(results)} 条文本，处理率: {len(results)}/{len(texts)}")
-            return results
+                    logger.error(f"批处理失败: {e}")
+                    # 如果批处理大小大于5，则减半批处理大小并重试
+                    if batch_size > 5:
+                        logger.info("将批处理大小从10减少到5，然后重试")
+                        batch_size = 5
+                        # 不增加i，重试同一批次
+                        time.sleep(0.1)  # 短暂延迟后重试
+                    else:
+                        # 批处理大小已经是5或更小，回退到逐个处理
+                        logger.info("批处理大小已经是5或更小，将逐个处理")
+                        for j, text in enumerate(batch_texts):
+                            try:
+                                logger.debug(f"[{i+j+1}/{len(texts)}] 提取标签: {text[:50]}...")
+                                result = chain.invoke({"text": text, "tags": tags_str})
+                                # 清理结果
+                                tags = [tag.strip() for tag in result.split(",") if tag.strip()]
+                                valid_tags = [tag for tag in tags if tag in st.session_state.custom_tags]
+                                result_str = ", ".join(valid_tags[:3])
+                                # 如果没有有效标签，则随机选择一个
+                                if not result_str:
+                                    result_str = np.random.choice(st.session_state.custom_tags)
+                                results.append(result_str)
+                                logger.debug(f"[{i+j+1}/{len(texts)}] 提取标签结果: {result_str}")
+                            except Exception as e2:
+                                logger.error(f"标签提取出错: {e2}，使用模拟结果")
+                                st.warning(f"分析出错: {e2}，使用模拟结果")
+                                # 从标签库中随机选择1-3个标签
+                                num_tags = np.random.randint(1, 4)
+                                selected = np.random.choice(st.session_state.custom_tags, size=num_tags, replace=False)
+                                result_str = ", ".join(selected)
+                                results.append(result_str)
+                        
+                        # 更新进度
+                        if progress_callback:
+                            progress_callback(min(i + len(batch_texts), len(texts)))
+                        
+                        # 逐个处理完成后短暂延迟
+                        time.sleep(0.1)
+                        
+                        # 移动到下一批
+                        i += len(batch_texts)
             
-        else:
-            logger.error(f"不支持的分析模式: {mode}")
-            st.error(f"不支持的分析模式: {mode}")
-            return []
+            # 确保结果格式一致
+            results = [result for result in results if result]
+            
+            logger.info(f"标签提取完成，有效结果数量: {len(results)}/{len(texts)}")
+            return results
     except Exception as e:
         logger.error(f"分析过程发生错误: {str(e)}")
         # 记录详细的错误堆栈信息
@@ -573,7 +615,7 @@ def analyze_texts_langchain(texts, mode="sentiment", progress_callback=None):
         # 发生错误时返回模拟结果，确保应用不会崩溃
         logger.warning("返回模拟结果以确保应用继续运行")
         results = []
-        for text in texts:
+        for i, text in enumerate(texts):
             if mode == "sentiment":
                 results.append(np.random.choice(["正面", "负面", "中性"], p=[0.4, 0.3, 0.3]))
             elif mode == "keywords":
@@ -586,6 +628,16 @@ def analyze_texts_langchain(texts, mode="sentiment", progress_callback=None):
                 results.append(", ".join(selected))
             else:
                 results.append("")
+            
+            # 更新进度
+            if progress_callback:
+                progress_callback(i + 1)
+                
+            # 添加短暂延迟以确保UI更新
+            time.sleep(0.1)
+        
+        # 确保结果格式一致
+        results = [result for result in results if result]
         return results
 
 # 人工修正函数
@@ -768,7 +820,7 @@ if df is not None and not df.empty:
             
             # 计算总体进度
             # processed_in_col 是当前列中已处理的总数，需要计算全局已完成的任务数
-            current_col_completed = col_index * len(df) + processed_in_col
+            current_col_completed = col_index * len(df if df is not None else []) + processed_in_col
             progress = current_col_completed / total_tasks if total_tasks > 0 else 0
             progress_percentage = progress * 100
 
@@ -926,6 +978,10 @@ if "analyzed" in st.session_state and st.session_state.analyzed:
                 all_keywords = [kw.strip() for kw in all_keywords if kw.strip()]
                 
                 if all_keywords:
+                    # 统计关键词出现次数
+                    keyword_counts = Counter(all_keywords)
+                    top_keywords = dict(keyword_counts.most_common(10))
+                    
                     st.write(f"#### {col} - 关键词词云")
                     try:
                         # 检查matplotlib是否可用
