@@ -20,10 +20,33 @@
 - Pandas（数据处理）
 - Plotly/Matplotlib（数据可视化）
 
-## 安装依赖
+## 安装和配置
+
+### 1. 创建虚拟环境
+
+```bash
+# 使用 venv 创建虚拟环境
+python -m venv venv
+
+# 激活虚拟环境 (Windows)
+venv\Scripts\activate
+
+# 激活虚拟环境 (macOS/Linux)
+source venv/bin/activate
+```
+
+### 2. 安装依赖
 
 ```bash
 pip install -r requirements.txt
+```
+
+### 3. 配置 API 密钥
+
+在应用界面的侧边栏中输入您的 DeepSeek API Key，或者设置环境变量：
+
+```bash
+export DEEPSEEK_API_KEY="your-api-key-here"
 ```
 
 ## 运行项目
@@ -43,3 +66,11 @@ streamlit run app.py
 5. 查看分析结果和可视化图表
 6. 可进行人工修正
 7. 下载分析结果文件
+
+## 批处理优化
+
+项目支持智能批处理优化：
+- 默认批处理大小为10个文本
+- 如果批处理失败，会自动将批处理大小减半到5个文本
+- 如果仍然失败，则回退到逐个处理模式
+- 每次处理后有0.1秒延迟以控制API负载
