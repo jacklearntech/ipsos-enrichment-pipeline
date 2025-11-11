@@ -51,11 +51,22 @@ export DEEPSEEK_API_KEY="your-api-key-here"
 
 ## 运行项目
 
+### 本地运行
+
 ```bash
 streamlit run app.py
 ```
 
 运行后，项目将在本地 8501 端口提供服务，您可以在浏览器中访问 http://localhost:8501 查看应用。
+
+### 在 Streamlit Community Cloud 上部署
+
+1. 将项目推送到 GitHub 仓库
+2. 访问 [Streamlit Community Cloud](https://streamlit.io/cloud)
+3. 点击 "New app" 并连接您的 GitHub 仓库
+4. 选择 `streamlit_app.py` 作为主文件
+5. 点击 "Deploy!" 
+6. 部署完成后，您将获得一个公共 URL 来访问您的应用
 
 ## 使用说明
 
