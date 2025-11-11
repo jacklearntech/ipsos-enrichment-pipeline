@@ -165,8 +165,18 @@ def get_llm():
                 openai_api_base="https://api.deepseek.com/v1"
             )
         except Exception as e2:
+            # 尝试移除可能引起冲突的参数
             logger.error(f"使用最小参数集初始化仍失败: {e2}")
-            raise e2
+            try:
+                return ChatOpenAI(
+                    model="deepseek-chat",
+                    openai_api_key=api_key if api_key else "placeholder-key",
+                    openai_api_base="https://api.deepseek.com/v1",
+                    http_client=None  # 显式设置http_client为None以避免代理相关问题
+                )
+            except Exception as e3:
+                logger.error(f"尝试移除http_client仍失败: {e3}")
+                raise e3
 
 # 验证情感分析结果
 def validate_sentiment_result(result):
@@ -815,8 +825,7 @@ if df is not None and not df.empty:
         
         # 定义更新进度的函数
         def update_progress(current_col, col_index, processed_in_col, total_in_col):
-            # 使用列表包装变量以避免 nonlocal 问题
-            last_update_container = [last_update_time]
+            nonlocal last_update_time
             
             # 计算总体进度
             # processed_in_col 是当前列中已处理的总数，需要计算全局已完成的任务数
@@ -828,8 +837,8 @@ if df is not None and not df.empty:
             current_time = time.time()
             
             # 检查是否需要更新状态详情（每秒更新一次）
-            if (current_time - last_update_container[0] >= update_interval) or (current_col_completed == total_tasks):
-                last_update_container[0] = current_time
+            if (current_time - last_update_time >= update_interval) or (current_col_completed == total_tasks):
+                last_update_time = current_time
                 
                 # 更新进度条
                 with progress_placeholder:
